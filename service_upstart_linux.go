@@ -2,7 +2,7 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service
+package syscore
 
 import (
 	"errors"
@@ -146,7 +146,7 @@ func (s *upstart) Install() error {
 		return err
 	}
 
-	var to = &struct {
+	to := &struct {
 		*Config
 		Path            string
 		HasKillStanza   bool
@@ -182,6 +182,7 @@ func (s *upstart) Logger(errs chan<- error) (Logger, error) {
 	}
 	return s.SystemLogger(errs)
 }
+
 func (s *upstart) SystemLogger(errs chan<- error) (Logger, error) {
 	return newSysLogger(s.Name, errs)
 }
@@ -193,7 +194,7 @@ func (s *upstart) Run() (err error) {
 	}
 
 	s.Option.funcSingle(optionRunWait, func() {
-		var sigChan = make(chan os.Signal, 3)
+		sigChan := make(chan os.Signal, 3)
 		signal.Notify(sigChan, syscall.SIGTERM, os.Interrupt)
 		<-sigChan
 	})()
@@ -256,8 +257,15 @@ end script
 # Start
 script
 	{{if .LogOutput}}
-	stdout_log="{{.LogDirectory}}/{{.Name}}.out"
-	stderr_log="{{.LogDirectory}}/{{.Name}}.err"
+    log_dir="{{.LogDirectory}}"
+    stdout_log="$log_dir/$name.log"
+    stderr_log="$log_dir/$name.err"
+    if [ ! -d "$log_dir" ]; then
+        mkdir -p "$log_dir"
+        if grep $name $log_dir > /dev/null; then
+            chmod 750 $log_dir
+        fi
+    fi
 	{{end}}
 	
 	if [ -f "/etc/sysconfig/{{.Name}}" ]; then

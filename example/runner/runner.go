@@ -14,7 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/kardianos/service"
+	service "github.com/darkit/syscore"
 )
 
 // Config is the runner app config structure.
@@ -55,6 +55,7 @@ func (p *program) Start(s service.Service) error {
 	go p.run()
 	return nil
 }
+
 func (p *program) run() {
 	logger.Info("Starting ", p.DisplayName)
 	defer func() {
@@ -66,7 +67,7 @@ func (p *program) run() {
 	}()
 
 	if p.Stderr != "" {
-		f, err := os.OpenFile(p.Stderr, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0777)
+		f, err := os.OpenFile(p.Stderr, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o777)
 		if err != nil {
 			logger.Warningf("Failed to open std err %q: %v", p.Stderr, err)
 			return
@@ -75,7 +76,7 @@ func (p *program) run() {
 		p.cmd.Stderr = f
 	}
 	if p.Stdout != "" {
-		f, err := os.OpenFile(p.Stdout, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0777)
+		f, err := os.OpenFile(p.Stdout, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o777)
 		if err != nil {
 			logger.Warningf("Failed to open std out %q: %v", p.Stdout, err)
 			return
@@ -91,6 +92,7 @@ func (p *program) run() {
 
 	return
 }
+
 func (p *program) Stop(s service.Service) error {
 	close(p.exit)
 	logger.Info("Stopping ", p.DisplayName)

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service
+package syscore
 
 import (
 	"bytes"
@@ -25,12 +25,15 @@ type solarisSystem struct{}
 func (solarisSystem) String() string {
 	return version
 }
+
 func (solarisSystem) Detect() bool {
 	return true
 }
+
 func (solarisSystem) Interactive() bool {
 	return interactive
 }
+
 func (solarisSystem) New(i Interface, c *Config) (Service, error) {
 	s := &solarisService{
 		i:      i,
@@ -132,7 +135,7 @@ func (s *solarisService) Install() error {
 	if err := xml.EscapeText(escaped, []byte(s.DisplayName)); err == nil {
 		Display = escaped.String()
 	}
-	var to = &struct {
+	to := &struct {
 		*Config
 		Prefix  string
 		Display string
@@ -202,9 +205,11 @@ func (s *solarisService) Status() (Status, error) {
 func (s *solarisService) Start() error {
 	return run("/usr/sbin/svcadm", "enable", s.getFMRI())
 }
+
 func (s *solarisService) Stop() error {
 	return run("/usr/sbin/svcadm", "disable", s.getFMRI())
 }
+
 func (s *solarisService) Restart() error {
 	err := s.Stop()
 	if err != nil {
@@ -223,7 +228,7 @@ func (s *solarisService) Run() error {
 	}
 
 	s.Option.funcSingle(optionRunWait, func() {
-		var sigChan = make(chan os.Signal, 3)
+		sigChan := make(chan os.Signal, 3)
 		signal.Notify(sigChan, syscall.SIGTERM, os.Interrupt)
 		<-sigChan
 	})()
@@ -237,6 +242,7 @@ func (s *solarisService) Logger(errs chan<- error) (Logger, error) {
 	}
 	return s.SystemLogger(errs)
 }
+
 func (s *solarisService) SystemLogger(errs chan<- error) (Logger, error) {
 	return newSysLogger(s.Name, errs)
 }

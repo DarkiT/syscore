@@ -10,7 +10,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/kardianos/service"
+	service "github.com/darkit/syscore"
 )
 
 var logger service.Logger
@@ -34,6 +34,7 @@ func (p *program) Start(s service.Service) error {
 	go p.run()
 	return nil
 }
+
 func (p *program) run() error {
 	logger.Infof("I'm running %v.", service.Platform())
 	ticker := time.NewTicker(2 * time.Second)
@@ -47,6 +48,7 @@ func (p *program) run() error {
 		}
 	}
 }
+
 func (p *program) Stop(s service.Service) error {
 	// Any work in Stop should be quick, usually a few seconds at most.
 	logger.Info("I'm Stopping!")
@@ -74,7 +76,8 @@ func main() {
 		Description: "This is an example Go service that outputs log messages.",
 		Dependencies: []string{
 			"Requires=network.target",
-			"After=network-online.target syslog.target"},
+			"After=network-online.target syslog.target",
+		},
 		Option: options,
 	}
 

@@ -6,7 +6,7 @@
 //go:build su
 // +build su
 
-package service_test
+package syscore_test
 
 import (
 	"flag"
@@ -18,8 +18,6 @@ import (
 	"regexp"
 	"testing"
 	"time"
-
-	"github.com/kardianos/service"
 )
 
 const runAsServiceArg = "RunThisAsService"
@@ -102,7 +100,7 @@ func writeReport(reportDir string, action string) {
 	err := ioutil.WriteFile(
 		filepath.Join(reportDir, fmt.Sprintf("%d-%s", timeStamp, action)),
 		b,
-		0644,
+		0o644,
 	)
 	if err != nil {
 		log.Fatal(err)

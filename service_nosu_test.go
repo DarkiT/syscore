@@ -5,7 +5,7 @@
 //go:build !su
 // +build !su
 
-package service_test
+package syscore_test
 
 import "testing"
 

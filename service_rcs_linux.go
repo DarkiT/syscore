@@ -2,7 +2,7 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service
+package syscore
 
 import (
 	"bytes"
@@ -115,7 +115,7 @@ func (s *rcs) Install() error {
 		return err
 	}
 
-	var to = &struct {
+	to := &struct {
 		*Config
 		Path         string
 		LogDirectory string
@@ -130,7 +130,7 @@ func (s *rcs) Install() error {
 		return err
 	}
 
-	if err = os.Chmod(confPath, 0755); err != nil {
+	if err = os.Chmod(confPath, 0o755); err != nil {
 		return err
 	}
 
@@ -161,6 +161,7 @@ func (s *rcs) Logger(errs chan<- error) (Logger, error) {
 	}
 	return s.SystemLogger(errs)
 }
+
 func (s *rcs) SystemLogger(errs chan<- error) (Logger, error) {
 	return newSysLogger(s.Name, errs)
 }
@@ -172,7 +173,7 @@ func (s *rcs) Run() (err error) {
 	}
 
 	s.Option.funcSingle(optionRunWait, func() {
-		var sigChan = make(chan os.Signal, 3)
+		sigChan := make(chan os.Signal, 3)
 		signal.Notify(sigChan, syscall.SIGTERM, os.Interrupt)
 		<-sigChan
 	})()
@@ -235,6 +236,15 @@ name={{.Name}}
 pid_file="/var/run/$name.pid"
 stdout_log="{{.LogDirectory}}/$name.log"
 stderr_log="{{.LogDirectory}}/$name.err"
+log_dir="{{.LogDirectory}}"
+stdout_log="$log_dir/$name.log"
+stderr_log="$log_dir/$name.err"
+if [ ! -d "$log_dir" ]; then
+    mkdir -p "$log_dir"
+    if grep $name $log_dir > /dev/null; then
+        chmod 750 $log_dir
+    fi
+fi
 
 [ -e /etc/sysconfig/$name ] && . /etc/sysconfig/$name
 

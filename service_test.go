@@ -2,14 +2,14 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service_test
+package syscore_test
 
 import (
 	"os"
 	"testing"
 	"time"
 
-	"github.com/kardianos/service"
+	service "github.com/darkit/syscore"
 )
 
 func TestRunInterrupt(t *testing.T) {
@@ -77,9 +77,11 @@ func (p *program) Start(s service.Service) error {
 	go p.run()
 	return nil
 }
+
 func (p *program) run() {
 	// Do work here
 }
+
 func (p *program) Stop(s service.Service) error {
 	p.numStopped++
 	return nil

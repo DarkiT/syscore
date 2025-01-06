@@ -2,7 +2,7 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service
+package syscore
 
 import (
 	"fmt"
@@ -13,20 +13,25 @@ import (
 	"text/template"
 )
 
-const version = "freebsd"
-const configDir = "/usr/local/etc/rc.d"
+const (
+	version   = "freebsd"
+	configDir = "/usr/local/etc/rc.d"
+)
 
 type freebsdSystem struct{}
 
 func (freebsdSystem) String() string {
 	return version
 }
+
 func (freebsdSystem) Detect() bool {
 	return true
 }
+
 func (freebsdSystem) Interactive() bool {
 	return interactive
 }
+
 func (freebsdSystem) New(i Interface, c *Config) (Service, error) {
 	s := &freebsdService{
 		i:      i,
@@ -90,7 +95,7 @@ func (s *freebsdService) template() *template.Template {
 }
 
 func (s *freebsdService) configPath() (cp string, err error) {
-	if oserr := os.MkdirAll(configDir, 0755); oserr != nil {
+	if oserr := os.MkdirAll(configDir, 0o755); oserr != nil {
 		err = oserr
 		return
 	}
@@ -120,7 +125,7 @@ func (s *freebsdService) Install() error {
 	}
 	defer f.Close()
 
-	var to = &struct {
+	to := &struct {
 		*Config
 		Path string
 	}{
@@ -133,7 +138,7 @@ func (s *freebsdService) Install() error {
 		return err
 	}
 
-	if err = os.Chmod(confPath, 0755); err != nil {
+	if err = os.Chmod(confPath, 0o755); err != nil {
 		return err
 	}
 
@@ -188,7 +193,7 @@ func (s *freebsdService) Run() error {
 	}
 
 	s.Option.funcSingle(optionRunWait, func() {
-		var sigChan = make(chan os.Signal, 3)
+		sigChan := make(chan os.Signal, 3)
 		signal.Notify(sigChan, syscall.SIGTERM, os.Interrupt)
 		<-sigChan
 	})()

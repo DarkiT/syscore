@@ -2,9 +2,10 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service
+package syscore
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -39,6 +40,11 @@ const (
 	errnoServiceDoesNotExist syscall.Errno = 1060
 )
 
+var (
+	errAlreadyRunning = errors.New("service already running")
+	errAlreadyStopped = errors.New("service already stopped")
+)
+
 type windowsService struct {
 	i Interface
 	*Config
@@ -58,12 +64,15 @@ type windowsSystem struct{}
 func (windowsSystem) String() string {
 	return version
 }
+
 func (windowsSystem) Detect() bool {
 	return true
 }
+
 func (windowsSystem) Interactive() bool {
 	return interactive
 }
+
 func (windowsSystem) New(i Interface, c *Config) (Service, error) {
 	ws := &windowsService{
 		i:      i,
@@ -172,97 +181,70 @@ func (ws *windowsService) setError(err error) {
 	defer ws.errSync.Unlock()
 	ws.stopStartErr = err
 }
+
 func (ws *windowsService) getError() error {
 	ws.errSync.Lock()
 	defer ws.errSync.Unlock()
 	return ws.stopStartErr
 }
 
-func (ws *windowsService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
-	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
+func (ws *windowsService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, exitCode uint32) {
+	var err error
+	defer func() {
+		if err != nil {
+			ssec = true
+			ws.setError(err)
+		}
+	}()
+
+	// Signal that we're starting.
 	changes <- svc.Status{State: svc.StartPending}
 
-	if err := ws.i.Start(ws); err != nil {
-		ws.setError(err)
-		return true, 1
+	// Perform the actual start.
+	if initErr := ws.i.Start(ws); initErr != nil {
+		err = initErr
+		exitCode = 1
+		return
 	}
 
-	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
+	// Signal that we're ready.
+	changes <- svc.Status{
+		State:   svc.Running,
+		Accepts: svc.AcceptStop | svc.AcceptShutdown,
+	}
+
+	// Expect service change requests.
+	var stopMethod func(s Service) error
 loop:
-	for {
-		c := <-r
+	for c := range r {
 		switch c.Cmd {
 		case svc.Interrogate:
 			changes <- c.CurrentStatus
-		case svc.Stop:
-			changes <- svc.Status{State: svc.StopPending}
-			if err := ws.i.Stop(ws); err != nil {
-				ws.setError(err)
-				return true, 2
-			}
-			break loop
 		case svc.Shutdown:
-			changes <- svc.Status{State: svc.StopPending}
-			var err error
-			if wsShutdown, ok := ws.i.(Shutdowner); ok {
-				err = wsShutdown.Shutdown(ws)
-			} else {
-				err = ws.i.Stop(ws)
+			if shutdowner, ok := ws.i.(Shutdowner); ok {
+				stopMethod = shutdowner.Shutdown
+				break loop
 			}
-			if err != nil {
-				ws.setError(err)
-				return true, 2
-			}
+			fallthrough
+		case svc.Stop:
+			stopMethod = ws.i.Stop
 			break loop
 		default:
-			continue loop
+			continue
 		}
 	}
 
-	return false, 0
-}
-
-func lowPrivMgr() (*mgr.Mgr, error) {
-	h, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT|windows.SC_MANAGER_ENUMERATE_SERVICE)
-	if err != nil {
-		return nil, err
-	}
-	return &mgr.Mgr{Handle: h}, nil
-}
-
-func lowPrivSvc(m *mgr.Mgr, name string) (*mgr.Service, error) {
-	h, err := windows.OpenService(
-		m.Handle, syscall.StringToUTF16Ptr(name),
-		windows.SERVICE_QUERY_CONFIG|windows.SERVICE_QUERY_STATUS|windows.SERVICE_START|windows.SERVICE_STOP)
-	if err != nil {
-		return nil, err
-	}
-	return &mgr.Service{Handle: h, Name: name}, nil
-}
-
-func (ws *windowsService) setEnvironmentVariablesInRegistry() error {
-	if len(ws.EnvVars) == 0 {
-		return nil
+	// We were requested to stop,
+	// change state and proceed to do so.
+	changes <- svc.Status{State: svc.StopPending}
+	if stopErr := stopMethod(ws); stopErr != nil {
+		err = stopErr
+		exitCode = 2
+		return
 	}
 
-	k, _, err := registry.CreateKey(
-		registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Services\`+ws.Name,
-		registry.QUERY_VALUE|registry.SET_VALUE|registry.CREATE_SUB_KEY)
-	if err != nil {
-		return fmt.Errorf("failed creating env var registry key, err = %v", err)
-	}
-	envStrings := make([]string, 0, len(ws.EnvVars))
-	for k, v := range ws.EnvVars {
-		envStrings = append(envStrings, k+"="+v)
-	}
-
-	if err := k.SetStringsValue("Environment", envStrings); err != nil {
-		return fmt.Errorf("failed setting env var registry key, err = %v", err)
-	}
-	if err := k.Close(); err != nil {
-		return fmt.Errorf("failed closing env var registry key, err = %v", err)
-	}
-	return nil
+	// Calling function will set our state to Stopped.
+	return
 }
 
 func (ws *windowsService) Install() error {
@@ -276,11 +258,6 @@ func (ws *windowsService) Install() error {
 		return err
 	}
 	defer m.Disconnect()
-
-	if err := ws.setEnvironmentVariablesInRegistry(); err != nil {
-		return err
-	}
-
 	s, err := m.OpenService(ws.Name)
 	if err == nil {
 		s.Close()
@@ -315,7 +292,7 @@ func (ws *windowsService) Install() error {
 		return err
 	}
 	if onFailure := ws.Option.string(OnFailure, ""); onFailure != "" {
-		var delay = 1 * time.Second
+		delay := 1 * time.Second
 		if d, err := time.ParseDuration(ws.Option.string(OnFailureDelayDuration, "1s")); err == nil {
 			delay = d
 		}
@@ -356,19 +333,21 @@ func (ws *windowsService) Uninstall() error {
 		return err
 	}
 	defer m.Disconnect()
+
 	s, err := m.OpenService(ws.Name)
 	if err != nil {
 		return fmt.Errorf("service %s is not installed", ws.Name)
 	}
 	defer s.Close()
-	err = s.Delete()
-	if err != nil {
+
+	if err := s.Delete(); err != nil {
 		return err
 	}
-	err = eventlog.Remove(ws.Name)
-	if err != nil {
+
+	if err := eventlog.Remove(ws.Name); err != nil {
 		return fmt.Errorf("RemoveEventLogSource() failed: %s", err)
 	}
+
 	return nil
 }
 
@@ -394,7 +373,7 @@ func (ws *windowsService) Run() error {
 		return err
 	}
 
-	sigChan := make(chan os.Signal)
+	sigChan := make(chan os.Signal, 1)
 
 	signal.Notify(sigChan, os.Interrupt)
 
@@ -404,13 +383,13 @@ func (ws *windowsService) Run() error {
 }
 
 func (ws *windowsService) Status() (Status, error) {
-	m, err := lowPrivMgr()
+	m, err := mgr.Connect()
 	if err != nil {
 		return StatusUnknown, err
 	}
 	defer m.Disconnect()
 
-	s, err := lowPrivSvc(m, ws.Name)
+	s, err := m.OpenService(ws.Name)
 	if err != nil {
 		if errno, ok := err.(syscall.Errno); ok && errno == errnoServiceDoesNotExist {
 			return StatusUnknown, ErrNotInstalled
@@ -445,80 +424,149 @@ func (ws *windowsService) Status() (Status, error) {
 }
 
 func (ws *windowsService) Start() error {
-	m, err := lowPrivMgr()
+	m, err := mgr.Connect()
 	if err != nil {
 		return err
 	}
 	defer m.Disconnect()
 
-	s, err := lowPrivSvc(m, ws.Name)
+	s, err := m.OpenService(ws.Name)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
-	return s.Start()
+
+	status, err := s.Query()
+	if err != nil {
+		return err
+	}
+
+	switch status.State {
+	default:
+		err = errAlreadyRunning
+	case svc.StopPending:
+		err = waitForStateChange(s, status, svc.Stopped)
+	case svc.Stopped:
+		if startErr := s.Start(); startErr != nil {
+			return startErr
+		}
+		err = waitForStateChange(s, status, svc.Running)
+	}
+
+	return err
 }
 
 func (ws *windowsService) Stop() error {
-	m, err := lowPrivMgr()
+	m, err := mgr.Connect()
 	if err != nil {
 		return err
 	}
 	defer m.Disconnect()
 
-	s, err := lowPrivSvc(m, ws.Name)
+	s, err := m.OpenService(ws.Name)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 
-	return ws.stopWait(s)
+	status, err := s.Query()
+	if err != nil {
+		return err
+	}
+
+	switch status.State {
+	case svc.Stopped:
+		err = errAlreadyStopped
+	case svc.StopPending:
+		err = waitForStateChange(s, status, svc.Stopped)
+	default:
+		if _, stopErr := s.Control(svc.Stop); stopErr != nil {
+			return stopErr
+		}
+		err = waitForStateChange(s, status, svc.Stopped)
+	}
+
+	return err
 }
 
 func (ws *windowsService) Restart() error {
-	m, err := lowPrivMgr()
-	if err != nil {
-		return err
+	if stopErr := ws.Stop(); stopErr != nil {
+		return stopErr
 	}
-	defer m.Disconnect()
-
-	s, err := lowPrivSvc(m, ws.Name)
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-
-	err = ws.stopWait(s)
-	if err != nil {
-		return err
-	}
-
-	return s.Start()
+	return ws.Start()
 }
 
-func (ws *windowsService) stopWait(s *mgr.Service) error {
-	// First stop the service. Then wait for the service to
-	// actually stop before starting it.
-	status, err := s.Control(svc.Stop)
-	if err != nil {
-		return err
+// statusInterval retreives a (bounded) duration from the status,
+// or provides a default.
+func statusInterval(status svc.Status) time.Duration {
+	// MSDN:
+	// "Do not wait longer than the wait hint. A good interval is
+	// one-tenth of the wait hint but not less than 1 second
+	// and not more than 10 seconds."
+	const (
+		lower = time.Second
+		upper = time.Second * 10
+	)
+
+	waitDuration := (time.Duration(status.WaitHint) * time.Millisecond) / 10
+	if waitDuration < lower {
+		waitDuration = lower
+	} else if waitDuration > upper {
+		waitDuration = upper
 	}
+	return waitDuration
+}
 
-	timeDuration := time.Millisecond * 50
+// waitForStateChange polls the service until its state matches the desiredState,
+// and error is encountered, or we timeout.
+func waitForStateChange(s *mgr.Service, currentStatus svc.Status, desiredState svc.State) error {
+	const defaultAttempts = 10
+	var (
+		initialInterval = statusInterval(currentStatus)
+		queryTicker     = time.NewTicker(initialInterval)
+		queryTimer      *time.Timer
+	)
+	// If the service is providing hints,
+	// use them, otherwise use a default timeout.
+	if currentStatus.CheckPoint != 0 {
+		queryTimer = time.NewTimer(initialInterval)
+	} else {
+		queryTimer = time.NewTimer(initialInterval * defaultAttempts)
+	}
+	defer func() {
+		queryTicker.Stop()
+		queryTimer.Stop()
+	}()
 
-	timeout := time.After(getStopTimeout() + (timeDuration * 2))
-	tick := time.NewTicker(timeDuration)
-	defer tick.Stop()
-
-	for status.State != svc.Stopped {
+	var (
+		currentState   = currentStatus.State
+		lastCheckpoint uint32
+	)
+	for currentState != desiredState {
 		select {
-		case <-tick.C:
-			status, err = s.Query()
-			if err != nil {
-				return err
+		case <-queryTicker.C:
+			currentStatus, queryErr := s.Query()
+			if queryErr != nil {
+				return queryErr
 			}
-		case <-timeout:
-			break
+
+			currentState = currentStatus.State
+			if currentState == desiredState {
+				return nil
+			}
+
+			if currentStatus.CheckPoint > lastCheckpoint {
+				// Service progressed,
+				// give it more time to complete.
+				if !queryTimer.Stop() {
+					<-queryTimer.C
+				}
+				queryTimer.Reset(statusInterval(currentStatus))
+			}
+			lastCheckpoint = currentStatus.CheckPoint
+		case <-queryTimer.C:
+			return fmt.Errorf("service did not enter desired state (%v) before we timed out",
+				desiredState)
 		}
 	}
 	return nil
@@ -549,6 +597,7 @@ func (ws *windowsService) Logger(errs chan<- error) (Logger, error) {
 	}
 	return ws.SystemLogger(errs)
 }
+
 func (ws *windowsService) SystemLogger(errs chan<- error) (Logger, error) {
 	el, err := eventlog.Open(ws.Name)
 	if err != nil {

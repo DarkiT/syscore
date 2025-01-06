@@ -2,7 +2,7 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service
+package syscore
 
 import (
 	"bytes"
@@ -150,7 +150,7 @@ func (s *systemd) Install() error {
 		return fmt.Errorf("Init already exists: %s", confPath)
 	}
 
-	f, err := os.OpenFile(confPath, os.O_WRONLY|os.O_CREATE, 0644)
+	f, err := os.OpenFile(confPath, os.O_WRONLY|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func (s *systemd) Install() error {
 		return err
 	}
 
-	var to = &struct {
+	to := &struct {
 		*Config
 		Path                 string
 		HasOutputFileSupport bool
@@ -172,6 +172,10 @@ func (s *systemd) Install() error {
 		SuccessExitStatus    string
 		LogOutput            bool
 		LogDirectory         string
+		RestartSec           string
+		KillMode             string
+		KillSignal           string
+		TimeoutStopSec       string
 	}{
 		s.Config,
 		path,
@@ -183,6 +187,10 @@ func (s *systemd) Install() error {
 		s.Option.string(optionSuccessExitStatus, ""),
 		s.Option.bool(optionLogOutput, optionLogOutputDefault),
 		s.Option.string(optionLogDirectory, defaultLogDirectory),
+		s.Option.string(optionRestartSec, "120s"),
+		s.Option.string(optionKillMode, ""),
+		s.Option.string(optionKillSignal, ""),
+		s.Option.string(optionTimeoutStopSec, ""),
 	}
 
 	err = s.template().Execute(f, to)
@@ -219,6 +227,7 @@ func (s *systemd) Logger(errs chan<- error) (Logger, error) {
 	}
 	return s.SystemLogger(errs)
 }
+
 func (s *systemd) SystemLogger(errs chan<- error) (Logger, error) {
 	return newSysLogger(s.Name, errs)
 }
@@ -230,7 +239,7 @@ func (s *systemd) Run() (err error) {
 	}
 
 	s.Option.funcSingle(optionRunWait, func() {
-		var sigChan = make(chan os.Signal, 3)
+		sigChan := make(chan os.Signal, 3)
 		signal.Notify(sigChan, syscall.SIGTERM, os.Interrupt)
 		<-sigChan
 	})()
@@ -320,8 +329,11 @@ StandardError=file:{{.LogDirectory}}/{{.Name}}.err
 {{if gt .LimitNOFILE -1 }}LimitNOFILE={{.LimitNOFILE}}{{end}}
 {{if .Restart}}Restart={{.Restart}}{{end}}
 {{if .SuccessExitStatus}}SuccessExitStatus={{.SuccessExitStatus}}{{end}}
-RestartSec=120
+{{if .RestartSec}}RestartSec={{.RestartSec}}{{end}}
 EnvironmentFile=-/etc/sysconfig/{{.Name}}
+{{if .KillMode }}KillMode={{.KillMode}}{{end}}
+{{if .KillSignal }}KillSignal={{.KillSignal}}{{end}}
+{{if .TimeoutStopSec }}TimeoutStopSec={{.TimeoutStopSec}}{{end}}
 
 {{range $k, $v := .EnvVars -}}
 Environment={{$k}}={{$v}}

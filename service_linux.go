@@ -2,17 +2,21 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service
+package syscore
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 )
 
-var cgroupFile = "/proc/1/cgroup"
+var (
+	cgroupFile    = "/proc/1/cgroup"
+	dockerEnvFile = "/.dockerenv"
+	mountInfoFile = "/proc/self/mountinfo"
+)
 
 type linuxSystemService struct {
 	name        string
@@ -24,12 +28,15 @@ type linuxSystemService struct {
 func (sc linuxSystemService) String() string {
 	return sc.name
 }
+
 func (sc linuxSystemService) Detect() bool {
 	return sc.detect()
 }
+
 func (sc linuxSystemService) Interactive() bool {
 	return sc.interactive()
 }
+
 func (sc linuxSystemService) New(i Interface, c *Config) (Service, error) {
 	return sc.new(i, sc.String(), c)
 }
@@ -72,6 +79,15 @@ func init() {
 			new: newRCSService,
 		},
 		linuxSystemService{
+			name:   "linux-procd",
+			detect: isProcd,
+			interactive: func() bool {
+				is, _ := isInteractive()
+				return is
+			},
+			new: newProcdService,
+		},
+		linuxSystemService{
 			name:   "unix-systemv",
 			detect: func() bool { return true },
 			interactive: func() bool {
@@ -85,7 +101,7 @@ func init() {
 
 func binaryName(pid int) (string, error) {
 	statPath := fmt.Sprintf("/proc/%d/stat", pid)
-	dataBytes, err := ioutil.ReadFile(statPath)
+	dataBytes, err := os.ReadFile(statPath)
 	if err != nil {
 		return "", err
 	}
@@ -98,7 +114,7 @@ func binaryName(pid int) (string, error) {
 }
 
 func isInteractive() (bool, error) {
-	inContainer, err := isInContainer(cgroupFile)
+	inContainer, err := isInContainer()
 	if err != nil {
 		return false, err
 	}
@@ -118,7 +134,62 @@ func isInteractive() (bool, error) {
 
 // isInContainer checks if the service is being executed in docker or lxc
 // container.
-func isInContainer(cgroupPath string) (bool, error) {
+func isInContainer() (bool, error) {
+	inContainer, err := isInContainerDockerEnv(dockerEnvFile)
+	if err != nil {
+		return false, err
+	}
+	if inContainer {
+		return true, nil
+	}
+
+	inContainer, err = isInContainerCGroup(cgroupFile)
+	if err != nil {
+		return false, err
+	}
+	if inContainer {
+		return true, nil
+	}
+
+	return isInContainerMountInfo(mountInfoFile)
+}
+
+func isInContainerDockerEnv(filePath string) (bool, error) {
+	_, err := os.Stat(filePath)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+
+	return false, err
+}
+
+func isInContainerMountInfo(filePath string) (bool, error) {
+	const maxlines = 15 // maximum lines to scan
+	f, err := os.Open(filePath)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	scan := bufio.NewScanner(f)
+
+	lines := 0
+	for scan.Scan() && !(lines > maxlines) {
+		if strings.Contains(scan.Text(), "/docker/containers") {
+			return true, nil
+		}
+		lines++
+	}
+	if err := scan.Err(); err != nil {
+		return false, err
+	}
+
+	return false, nil
+}
+
+func isInContainerCGroup(cgroupPath string) (bool, error) {
 	const maxlines = 5 // maximum lines to scan
 
 	f, err := os.Open(cgroupPath)
@@ -127,7 +198,6 @@ func isInContainer(cgroupPath string) (bool, error) {
 	}
 	defer f.Close()
 	scan := bufio.NewScanner(f)
-
 	lines := 0
 	for scan.Scan() && !(lines > maxlines) {
 		if strings.Contains(scan.Text(), "docker") || strings.Contains(scan.Text(), "lxc") {
@@ -138,7 +208,6 @@ func isInContainer(cgroupPath string) (bool, error) {
 	if err := scan.Err(); err != nil {
 		return false, err
 	}
-
 	return false, nil
 }
 
