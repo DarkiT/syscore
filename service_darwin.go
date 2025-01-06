@@ -2,7 +2,7 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service
+package syscore
 
 import (
 	"errors"
@@ -164,7 +164,7 @@ func (s *darwinLaunchdService) Install() error {
 
 	if s.userService {
 		// Ensure that ~/Library/LaunchAgents exists.
-		err = os.MkdirAll(filepath.Dir(confPath), 0700)
+		err = os.MkdirAll(filepath.Dir(confPath), 0o700)
 		if err != nil {
 			return err
 		}
@@ -182,7 +182,7 @@ func (s *darwinLaunchdService) Install() error {
 	}
 
 	stdOutPath, stdErrPath, _ := s.getLogPaths()
-	var to = &struct {
+	to := &struct {
 		*Config
 		Path string
 
@@ -271,7 +271,7 @@ func (s *darwinLaunchdService) Run() error {
 	}
 
 	s.Option.funcSingle(optionRunWait, func() {
-		var sigChan = make(chan os.Signal, 3)
+		sigChan := make(chan os.Signal, 3)
 		signal.Notify(sigChan, syscall.SIGTERM, os.Interrupt)
 		<-sigChan
 	})()

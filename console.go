@@ -2,7 +2,7 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service
+package syscore
 
 import (
 	"log"
@@ -26,22 +26,27 @@ func (c consoleLogger) Error(v ...interface{}) error {
 	c.err.Print(v...)
 	return nil
 }
+
 func (c consoleLogger) Warning(v ...interface{}) error {
 	c.warn.Print(v...)
 	return nil
 }
+
 func (c consoleLogger) Info(v ...interface{}) error {
 	c.info.Print(v...)
 	return nil
 }
+
 func (c consoleLogger) Errorf(format string, a ...interface{}) error {
 	c.err.Printf(format, a...)
 	return nil
 }
+
 func (c consoleLogger) Warningf(format string, a ...interface{}) error {
 	c.warn.Printf(format, a...)
 	return nil
 }
+
 func (c consoleLogger) Infof(format string, a ...interface{}) error {
 	c.info.Printf(format, a...)
 	return nil

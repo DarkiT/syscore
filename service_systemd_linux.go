@@ -2,7 +2,7 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service
+package syscore
 
 import (
 	"bytes"
@@ -150,7 +150,7 @@ func (s *systemd) Install() error {
 		return fmt.Errorf("Init already exists: %s", confPath)
 	}
 
-	f, err := os.OpenFile(confPath, os.O_WRONLY|os.O_CREATE, 0644)
+	f, err := os.OpenFile(confPath, os.O_WRONLY|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func (s *systemd) Install() error {
 		return err
 	}
 
-	var to = &struct {
+	to := &struct {
 		*Config
 		Path                 string
 		HasOutputFileSupport bool
@@ -172,17 +172,25 @@ func (s *systemd) Install() error {
 		SuccessExitStatus    string
 		LogOutput            bool
 		LogDirectory         string
+		RestartSec           string
+		KillMode             string
+		KillSignal           string
+		TimeoutStopSec       string
 	}{
 		s.Config,
 		path,
 		s.hasOutputFileSupport(),
-		s.Option.string(optionReloadSignal, ""),
-		s.Option.string(optionPIDFile, ""),
-		s.Option.int(optionLimitNOFILE, optionLimitNOFILEDefault),
-		s.Option.string(optionRestart, "always"),
-		s.Option.string(optionSuccessExitStatus, ""),
-		s.Option.bool(optionLogOutput, optionLogOutputDefault),
-		s.Option.string(optionLogDirectory, defaultLogDirectory),
+		s.Option.string(optionReloadSignal, "SIGHUP"),                                 // 重新加载配置时发送的信号，通常使用 SIGHUP
+		s.Option.string(optionPIDFile, fmt.Sprintf("/var/run/%s.pid", s.Config.Name)), // 指定服务的 PID 文件路径
+		s.Option.int(optionLimitNOFILE, optionLimitNOFILEDefault),                     // 打开的文件描述符限制，常用的默认值
+		s.Option.string(optionRestart, "always"),                                      // 服务失败时重启，通常建议使用 always
+		s.Option.string(optionSuccessExitStatus, "0"),                                 // 成功退出的状态码，通常为 0
+		s.Option.bool(optionLogOutput, optionLogOutputDefault),                        // 是否启用日志输出，通常建议启用
+		s.Option.string(optionLogDirectory, defaultLogDirectory),                      // 日志输出目录
+		s.Option.string(optionRestartSec, "5s"),                                       // 重启服务前的等待时间，通常设置为较短的时间
+		s.Option.string(optionKillMode, "control-group"),                              // 杀死进程的模式，通常使用 control-group
+		s.Option.string(optionKillSignal, "SIGTERM"),                                  // 停止服务时发送的信号，通常使用 SIGTERM
+		s.Option.string(optionTimeoutStopSec, "30s"),                                  // 停止服务的超时时间，通常设置为 30 秒
 	}
 
 	err = s.template().Execute(f, to)
@@ -219,6 +227,7 @@ func (s *systemd) Logger(errs chan<- error) (Logger, error) {
 	}
 	return s.SystemLogger(errs)
 }
+
 func (s *systemd) SystemLogger(errs chan<- error) (Logger, error) {
 	return newSysLogger(s.Name, errs)
 }
@@ -230,7 +239,7 @@ func (s *systemd) Run() (err error) {
 	}
 
 	s.Option.funcSingle(optionRunWait, func() {
-		var sigChan = make(chan os.Signal, 3)
+		sigChan := make(chan os.Signal, 3)
 		signal.Notify(sigChan, syscall.SIGTERM, os.Interrupt)
 		<-sigChan
 	})()
@@ -320,8 +329,11 @@ StandardError=file:{{.LogDirectory}}/{{.Name}}.err
 {{if gt .LimitNOFILE -1 }}LimitNOFILE={{.LimitNOFILE}}{{end}}
 {{if .Restart}}Restart={{.Restart}}{{end}}
 {{if .SuccessExitStatus}}SuccessExitStatus={{.SuccessExitStatus}}{{end}}
-RestartSec=120
+{{if .RestartSec}}RestartSec={{.RestartSec}}{{end}}
 EnvironmentFile=-/etc/sysconfig/{{.Name}}
+{{if .KillMode }}KillMode={{.KillMode}}{{end}}
+{{if .KillSignal }}KillSignal={{.KillSignal}}{{end}}
+{{if .TimeoutStopSec }}TimeoutStopSec={{.TimeoutStopSec}}{{end}}
 
 {{range $k, $v := .EnvVars -}}
 Environment={{$k}}={{$v}}

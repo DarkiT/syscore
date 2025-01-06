@@ -2,7 +2,7 @@
 // Use of this source code is governed by a zlib-style
 // license that can be found in the LICENSE file.
 
-package service
+package syscore
 
 import (
 	"errors"
@@ -83,7 +83,7 @@ func (s *sysv) Install() error {
 		return err
 	}
 
-	var to = &struct {
+	to := &struct {
 		*Config
 		Path         string
 		LogDirectory string
@@ -98,7 +98,7 @@ func (s *sysv) Install() error {
 		return err
 	}
 
-	if err = os.Chmod(confPath, 0755); err != nil {
+	if err = os.Chmod(confPath, 0o755); err != nil {
 		return err
 	}
 	for _, i := range [...]string{"2", "3", "4", "5"} {
@@ -132,6 +132,7 @@ func (s *sysv) Logger(errs chan<- error) (Logger, error) {
 	}
 	return s.SystemLogger(errs)
 }
+
 func (s *sysv) SystemLogger(errs chan<- error) (Logger, error) {
 	return newSysLogger(s.Name, errs)
 }
@@ -143,7 +144,7 @@ func (s *sysv) Run() (err error) {
 	}
 
 	s.Option.funcSingle(optionRunWait, func() {
-		var sigChan = make(chan os.Signal, 3)
+		sigChan := make(chan os.Signal, 3)
 		signal.Notify(sigChan, syscall.SIGTERM, os.Interrupt)
 		<-sigChan
 	})()
@@ -206,6 +207,15 @@ name=$(basename $(readlink -f $0))
 pid_file="/var/run/$name.pid"
 stdout_log="{{.LogDirectory}}/$name.log"
 stderr_log="{{.LogDirectory}}/$name.err"
+log_dir="{{.LogDirectory}}"
+stdout_log="$log_dir/$name.log"
+stderr_log="$log_dir/$name.err"
+if [ ! -d "$log_dir" ]; then
+    mkdir -p "$log_dir"
+    if grep $name $log_dir > /dev/null; then
+        chmod 750 $log_dir
+    fi
+fi
 
 {{range $k, $v := .EnvVars -}}
 export {{$k}}={{$v}}

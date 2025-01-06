@@ -18,7 +18,7 @@
 //	import (
 //		"log"
 //
-//		"github.com/kardianos/service"
+//		"github.com/darkit/syscore"
 //	)
 //
 //	var logger service.Logger
@@ -59,7 +59,8 @@
 //			logger.Error(err)
 //		}
 //	}
-package service // import "github.com/kardianos/service"
+
+package syscore // import "github.com/darkit/syscore"
 
 import (
 	"errors"
@@ -86,6 +87,9 @@ const (
 	optionLimitNOFILE        = "LimitNOFILE"
 	optionLimitNOFILEDefault = -1 // -1 = don't set in configuration
 	optionRestart            = "Restart"
+	optionKillMode           = "KillMode"
+	optionKillSignal         = "KillSignal"
+	optionTimeoutStopSec     = "TimeoutStopSec"
 
 	optionSuccessExitStatus = "SuccessExitStatus"
 
@@ -97,6 +101,7 @@ const (
 	optionOpenRCScript  = "OpenRCScript"
 
 	optionLogDirectory = "LogDirectory"
+	optionRestartSec   = "RestartSec"
 )
 
 // Status represents service status as an byte value
